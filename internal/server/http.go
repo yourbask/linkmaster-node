@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"linkmaster-node/internal/config"
 	"linkmaster-node/internal/handler"
@@ -69,17 +70,27 @@ func NewHTTPServer(cfg *config.Config) *HTTPServer {
 }
 
 func (s *HTTPServer) Start() error {
-	// 启动 IPv4 服务器
+	// 先启动 IPv4 服务器（避免端口冲突）
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		// 使用 net.Listen 明确监听 IPv4，便于错误处理
+		listener, err := net.Listen("tcp4", s.ipv4Server.Addr)
+		if err != nil {
+			s.logger.Error("IPv4服务器监听失败", zap.String("addr", s.ipv4Server.Addr), zap.Error(err))
+			return
+		}
+		
 		s.logger.Info("HTTP服务器启动 (IPv4)", zap.String("addr", s.ipv4Server.Addr))
-		if err := s.ipv4Server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.ipv4Server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("IPv4服务器启动失败", zap.Error(err))
 		}
 	}()
 
-	// 启动 IPv6 服务器
+	// 等待一小段时间，确保 IPv4 先启动
+	time.Sleep(100 * time.Millisecond)
+
+	// 再启动 IPv6 服务器
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -94,8 +105,6 @@ func (s *HTTPServer) Start() error {
 		if err := s.ipv6Server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("IPv6服务器启动失败", zap.Error(err))
 		}
-		// Serve 返回后关闭监听器
-		listener.Close()
 	}()
 
 	// 立即返回，服务器在后台运行
