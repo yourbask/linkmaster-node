@@ -293,8 +293,9 @@ build_from_source() {
 create_service() {
     echo -e "${BLUE}创建 systemd 服务...${NC}"
     
-    # 确保 run.sh 有执行权限
+    # 确保启动脚本有执行权限
     sudo chmod +x "$SOURCE_DIR/run.sh"
+    sudo chmod +x "$SOURCE_DIR/start-systemd.sh"
     
     sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
@@ -305,7 +306,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$SOURCE_DIR
-ExecStart=$SOURCE_DIR/run.sh start
+ExecStart=$SOURCE_DIR/start-systemd.sh
 Restart=always
 RestartSec=5
 Environment="BACKEND_URL=$BACKEND_URL"
