@@ -361,12 +361,28 @@ verify_installation() {
         fi
     fi
     
-    # 健康检查
-    sleep 2
-    if curl -sf http://localhost:2200/api/health > /dev/null; then
-        echo -e "${GREEN}✓ 健康检查通过${NC}"
-    else
-        echo -e "${YELLOW}⚠ 健康检查未通过，请稍后重试${NC}"
+    # 健康检查（重试多次，给服务启动时间）
+    echo -e "${BLUE}等待服务启动并检查健康状态...${NC}"
+    HEALTH_CHECK_PASSED=false
+    for i in {1..10}; do
+        sleep 2
+        if curl -sf http://localhost:2200/api/health > /dev/null 2>&1; then
+            HEALTH_RESPONSE=$(curl -s http://localhost:2200/api/health 2>/dev/null || echo "")
+            if echo "$HEALTH_RESPONSE" | grep -q '"status":"ok"'; then
+                HEALTH_CHECK_PASSED=true
+                echo -e "${GREEN}✓ 健康检查通过${NC}"
+                break
+            fi
+        fi
+        if [ $i -lt 10 ]; then
+            echo -e "${BLUE}等待服务启动... ($i/10)${NC}"
+        fi
+    done
+    
+    if [ "$HEALTH_CHECK_PASSED" = false ]; then
+        echo -e "${YELLOW}⚠ 健康检查未通过${NC}"
+        echo -e "${YELLOW}请检查服务日志: sudo journalctl -u ${SERVICE_NAME} -n 50${NC}"
+        echo -e "${YELLOW}或手动测试: curl http://localhost:2200/api/health${NC}"
     fi
 }
 
