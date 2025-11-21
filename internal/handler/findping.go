@@ -9,6 +9,12 @@ import (
 )
 
 func handleFindPing(c *gin.Context, url string, params map[string]interface{}) {
+	// 获取seq参数
+	seq := ""
+	if seqVal, ok := params["seq"].(string); ok {
+		seq = seqVal
+	}
+
 	// url应该是CIDR格式，如 8.8.8.0/24
 	cidr := url
 	if cidrParam, ok := params["cidr"].(string); ok && cidrParam != "" {
@@ -19,8 +25,9 @@ func handleFindPing(c *gin.Context, url string, params map[string]interface{}) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		c.JSON(200, gin.H{
-			"type":  "ceFindPing",
-			"error": "无效的CIDR格式",
+			"seq":    seq,
+			"type":   "ceFindPing",
+			"error":  "无效的CIDR格式",
 		})
 		return
 	}
@@ -65,11 +72,12 @@ func handleFindPing(c *gin.Context, url string, params map[string]interface{}) {
 	wg.Wait()
 
 	c.JSON(200, gin.H{
-		"type":       "ceFindPing",
-		"cidr":       cidr,
-		"alive_ips":  aliveIPs,
+		"seq":         seq,
+		"type":        "ceFindPing",
+		"cidr":        cidr,
+		"alive_ips":   aliveIPs,
 		"alive_count": len(aliveIPs),
-		"total_ips":  len(ipList),
+		"total_ips":   len(ipList),
 	})
 }
 

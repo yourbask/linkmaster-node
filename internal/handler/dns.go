@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net"
 	"os/exec"
 	"strings"
@@ -90,7 +91,7 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 			// 解析dig输出行，格式如：example.com.  300  IN  A  192.168.1.1
 			parts := strings.Fields(line)
 			if len(parts) >= 5 {
-				recordType := parts[3] // IN
+				// parts[3] 是 "IN" (record type)，parts[4] 是记录类型 (A, AAAA, CNAME等)
 				recordClass := parts[4] // A, AAAA, CNAME等
 				recordValue := ""
 				if len(parts) > 5 {
