@@ -1,5 +1,0 @@
-{"level":"info","ts":1763025207.120181,"caller":"agent/main.go:35","msg":"节点服务启动","version":"1.0.0"}
-{"level":"info","ts":1763025207.1208231,"caller":"server/http.go:60","msg":"HTTP服务器启动","addr":":2200"}
-{"level":"info","ts":1763653448.720011,"caller":"agent/main.go:57","msg":"收到停止信号，正在关闭服务..."}
-{"level":"fatal","ts":1763653448.720453,"caller":"agent/main.go:48","msg":"HTTP服务器启动失败","error":"http: Server closed","stacktrace":"main.main.func1\n\t/Users/yoyo/Desktop/newLinkMaster/node/cmd/agent/main.go:48"}
-{"level":"info","ts":1763653448.720591,"caller":"agent/main.go:66","msg":"服务已关闭"}

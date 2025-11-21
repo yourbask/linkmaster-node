@@ -131,6 +131,78 @@ show_build_alternatives() {
     echo ""
 }
 
+# 检查是否已安装
+check_installed() {
+    # 检查服务文件是否存在
+    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+        return 0
+    fi
+    # 检查二进制文件是否存在
+    if [ -f "$INSTALL_DIR/$BINARY_NAME" ]; then
+        return 0
+    fi
+    # 检查源码目录是否存在
+    if [ -d "$SOURCE_DIR" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# 卸载已安装的服务
+uninstall_service() {
+    echo -e "${BLUE}检测到已安装的服务，开始卸载...${NC}"
+    
+    # 停止服务
+    if systemctl is-active --quiet ${SERVICE_NAME} 2>/dev/null; then
+        echo -e "${BLUE}停止服务...${NC}"
+        sudo systemctl stop ${SERVICE_NAME} 2>/dev/null || true
+        sleep 2
+    fi
+    
+    # 禁用服务
+    if systemctl is-enabled --quiet ${SERVICE_NAME} 2>/dev/null; then
+        echo -e "${BLUE}禁用服务...${NC}"
+        sudo systemctl disable ${SERVICE_NAME} 2>/dev/null || true
+    fi
+    
+    # 删除 systemd 服务文件
+    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+        echo -e "${BLUE}删除服务文件...${NC}"
+        sudo rm -f /etc/systemd/system/${SERVICE_NAME}.service
+    fi
+    
+    # 删除可能的 override 配置目录（包含 Environment 等配置）
+    if [ -d "/etc/systemd/system/${SERVICE_NAME}.service.d" ]; then
+        echo -e "${BLUE}删除服务配置目录...${NC}"
+        sudo rm -rf /etc/systemd/system/${SERVICE_NAME}.service.d
+    fi
+    
+    # 重新加载 systemd daemon
+    sudo systemctl daemon-reload
+    
+    # 删除二进制文件
+    if [ -f "$INSTALL_DIR/$BINARY_NAME" ]; then
+        echo -e "${BLUE}删除二进制文件...${NC}"
+        sudo rm -f "$INSTALL_DIR/$BINARY_NAME"
+    fi
+    
+    # 删除源码目录
+    if [ -d "$SOURCE_DIR" ]; then
+        echo -e "${BLUE}删除源码目录...${NC}"
+        sudo rm -rf "$SOURCE_DIR"
+    fi
+    
+    # 清理进程（如果还在运行）
+    if pgrep -f "$BINARY_NAME" > /dev/null 2>&1; then
+        echo -e "${BLUE}清理残留进程...${NC}"
+        sudo pkill -f "$BINARY_NAME" 2>/dev/null || true
+        sleep 1
+    fi
+    
+    echo -e "${GREEN}✓ 卸载完成${NC}"
+    echo ""
+}
+
 # 从源码编译安装
 build_from_source() {
     echo -e "${BLUE}从源码编译安装节点端...${NC}"
@@ -151,9 +223,9 @@ build_from_source() {
     
     echo -e "${BLUE}检测到 Go 版本: ${GO_VERSION}${NC}"
     
-    # 如果源码目录已存在，先备份或删除
+    # 如果源码目录已存在，删除（卸载函数应该已经删除，这里作为保险）
     if [ -d "$SOURCE_DIR" ]; then
-        echo -e "${YELLOW}源码目录已存在，将更新代码...${NC}"
+        echo -e "${YELLOW}清理旧的源码目录...${NC}"
         sudo rm -rf "$SOURCE_DIR"
     fi
     
@@ -294,6 +366,12 @@ main() {
     echo ""
     
     detect_system
+    
+    # 检查是否已安装，如果已安装则先卸载
+    if check_installed; then
+        uninstall_service
+    fi
+    
     install_dependencies
     build_from_source
     create_service
