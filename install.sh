@@ -239,9 +239,13 @@ build_from_source() {
     fi
     
     # 设置目录权限
-    sudo chown -R $USER:$USER "$SOURCE_DIR" 2>/dev/null || true
+    sudo chown -R root:root "$SOURCE_DIR" 2>/dev/null || true
     
     cd "$SOURCE_DIR"
+    
+    # 配置 Git safe.directory，解决所有权问题
+    sudo git config --global --add safe.directory "$SOURCE_DIR" 2>/dev/null || true
+    git config --global --add safe.directory "$SOURCE_DIR" 2>/dev/null || true
     
     # 下载依赖
     echo -e "${BLUE}下载 Go 依赖...${NC}"
@@ -254,7 +258,7 @@ build_from_source() {
     # 编译
     echo -e "${BLUE}编译二进制文件...${NC}"
     BINARY_PATH="$SOURCE_DIR/agent"
-    if GOOS=linux GOARCH=${ARCH} CGO_ENABLED=0 go build -ldflags="-w -s" -o "$BINARY_PATH" ./cmd/agent 2>&1; then
+    if GOOS=linux GOARCH=${ARCH} CGO_ENABLED=0 go build -buildvcs=false -ldflags="-w -s" -o "$BINARY_PATH" ./cmd/agent 2>&1; then
         if [ -f "$BINARY_PATH" ] && [ -s "$BINARY_PATH" ]; then
             echo -e "${GREEN}✓ 编译成功${NC}"
         else

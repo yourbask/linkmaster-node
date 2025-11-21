@@ -49,6 +49,10 @@ update_and_build() {
         return 0
     fi
     
+    # 配置 Git safe.directory，解决所有权问题
+    CURRENT_DIR=$(pwd)
+    git config --global --add safe.directory "$CURRENT_DIR" 2>/dev/null || true
+    
     # 拉取最新代码
     if git pull 2>&1; then
         echo -e "${GREEN}✓ 代码更新完成${NC}"
@@ -87,7 +91,7 @@ update_and_build() {
             ;;
     esac
     
-    if GOOS=linux GOARCH=${ARCH} CGO_ENABLED=0 go build -ldflags="-w -s" -o "$BINARY_NAME" ./cmd/agent 2>&1; then
+    if GOOS=linux GOARCH=${ARCH} CGO_ENABLED=0 go build -buildvcs=false -ldflags="-w -s" -o "$BINARY_NAME" ./cmd/agent 2>&1; then
         if [ -f "$BINARY_NAME" ] && [ -s "$BINARY_NAME" ]; then
             chmod +x "$BINARY_NAME"
             echo -e "${GREEN}✓ 编译成功${NC}"
