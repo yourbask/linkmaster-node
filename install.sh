@@ -238,7 +238,7 @@ build_from_source() {
         exit 1
     fi
     
-    # 设置目录权限
+    # 设置目录权限（允许当前用户访问，但服务运行时是 root）
     sudo chown -R root:root "$SOURCE_DIR" 2>/dev/null || true
     
     cd "$SOURCE_DIR"
@@ -247,19 +247,23 @@ build_from_source() {
     sudo git config --global --add safe.directory "$SOURCE_DIR" 2>/dev/null || true
     git config --global --add safe.directory "$SOURCE_DIR" 2>/dev/null || true
     
-    # 下载依赖
+    # 下载依赖（使用 sudo 以 root 用户执行）
     echo -e "${BLUE}下载 Go 依赖...${NC}"
-    if ! go mod download 2>&1; then
+    if ! sudo bash -c "cd '$SOURCE_DIR' && go mod download" 2>&1; then
         echo -e "${RED}下载依赖失败${NC}"
         show_build_alternatives
         exit 1
     fi
     
-    # 编译
+    # 编译到临时文件（在用户有权限的目录），然后移动到目标位置
     echo -e "${BLUE}编译二进制文件...${NC}"
+    TEMP_BINARY=$(mktemp)
     BINARY_PATH="$SOURCE_DIR/agent"
-    if GOOS=linux GOARCH=${ARCH} CGO_ENABLED=0 go build -buildvcs=false -ldflags="-w -s" -o "$BINARY_PATH" ./cmd/agent 2>&1; then
+    
+    # 使用 sudo 以 root 用户编译，直接输出到目标位置
+    if sudo bash -c "cd '$SOURCE_DIR' && GOOS=linux GOARCH=${ARCH} CGO_ENABLED=0 go build -buildvcs=false -ldflags='-w -s' -o '$BINARY_PATH' ./cmd/agent" 2>&1; then
         if [ -f "$BINARY_PATH" ] && [ -s "$BINARY_PATH" ]; then
+            sudo chmod +x "$BINARY_PATH"
             echo -e "${GREEN}✓ 编译成功${NC}"
         else
             echo -e "${RED}编译失败：未生成二进制文件${NC}"
@@ -271,6 +275,9 @@ build_from_source() {
         show_build_alternatives
         exit 1
     fi
+    
+    # 清理临时文件
+    rm -f "$TEMP_BINARY" 2>/dev/null || true
     
     # 复制到安装目录（可选，保留在源码目录供 run.sh 使用）
     sudo mkdir -p "$INSTALL_DIR"
