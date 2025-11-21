@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -186,69 +187,67 @@ func HandleContinuousStatus(c *gin.Context) {
 }
 
 func pushResultToBackend(taskID string, result map[string]interface{}) {
+	// 确保result包含必要的字段
+	if result["timestamp"] == nil {
+		result["timestamp"] = time.Now().Unix()
+	}
+	if result["latency"] == nil {
+		result["latency"] = 0.0
+	}
+	if result["success"] == nil {
+		result["success"] = true
+	}
+	if result["packet_loss"] == nil {
+		result["packet_loss"] = false
+	}
+
 	// 推送结果到后端
 	url := fmt.Sprintf("%s/api/public/node/continuous/result", backendURL)
 	
-	// 获取本机IP
-	nodeIP := getLocalIP()
-	
+	// 不发送node_ip，让后端从请求中获取客户端IP（外网IP）
 	data := map[string]interface{}{
 		"task_id": taskID,
-		"node_ip": nodeIP,
 		"result":  result,
 	}
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		logger.Error("序列化结果失败", zap.Error(err))
+		logger.Error("序列化结果失败", zap.Error(err), zap.String("task_id", taskID))
 		return
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		logger.Error("创建请求失败", zap.Error(err))
+		logger.Error("创建请求失败", zap.Error(err), zap.String("task_id", taskID))
 		return
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Warn("推送结果失败", zap.Error(err))
-		// 如果推送失败，停止任务
-		taskMutex.Lock()
-		if task, exists := continuousTasks[taskID]; exists {
-			task.IsRunning = false
-			if task.pingTask != nil {
-				task.pingTask.Stop()
-			}
-			if task.tcpingTask != nil {
-				task.tcpingTask.Stop()
-			}
-			delete(continuousTasks, taskID)
-		}
-		taskMutex.Unlock()
+		logger.Warn("推送结果失败，继续运行", 
+			zap.Error(err), 
+			zap.String("task_id", taskID),
+			zap.String("url", url))
+		// 推送失败不停止任务，继续运行
 		return
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
-		logger.Warn("推送结果失败", zap.Int("status", resp.StatusCode))
-		// 如果推送失败，停止任务
-		taskMutex.Lock()
-		if task, exists := continuousTasks[taskID]; exists {
-			task.IsRunning = false
-			if task.pingTask != nil {
-				task.pingTask.Stop()
-			}
-			if task.tcpingTask != nil {
-				task.tcpingTask.Stop()
-			}
-			delete(continuousTasks, taskID)
-		}
-		taskMutex.Unlock()
+		body, _ := io.ReadAll(resp.Body)
+		logger.Warn("推送结果失败，继续运行", 
+			zap.Int("status", resp.StatusCode),
+			zap.String("task_id", taskID),
+			zap.String("url", url),
+			zap.String("response", string(body)))
+		// 推送失败不停止任务，继续运行
+		return
 	}
+
+	logger.Debug("推送结果成功", zap.String("task_id", taskID))
 }
 
 func getLocalIP() string {

@@ -104,33 +104,42 @@ func (t *PingTask) executePing() map[string]interface{} {
 
 func parsePingOutput(output string) map[string]interface{} {
 	result := map[string]interface{}{
-		"latency":     0.0,
+		"latency":     float64(0),
 		"success":     true,
 		"packet_loss": false,
 	}
 
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		
+		// 解析丢包率：4 packets transmitted, 4 received, 0% packet loss
 		if strings.Contains(line, "packets transmitted") {
-			// 解析丢包率
 			parts := strings.Fields(line)
 			for i, part := range parts {
 				if part == "packet" && i+2 < len(parts) {
-					if loss, err := strconv.ParseFloat(strings.Trim(parts[i+1], "%"), 64); err == nil {
+					// 查找百分比
+					lossStr := strings.Trim(parts[i+1], "%")
+					if loss, err := strconv.ParseFloat(lossStr, 64); err == nil {
 						result["packet_loss"] = loss > 0
+						if loss > 0 {
+							result["success"] = false
+						}
 					}
 				}
 			}
 		}
-		if strings.Contains(line, "min/avg/max") {
-			// 解析平均延迟
+		
+		// 解析延迟：rtt min/avg/max/mdev = 10.123/12.456/15.789/2.345 ms
+		if strings.Contains(line, "min/avg/max") || strings.Contains(line, "rtt") {
 			parts := strings.Fields(line)
 			for _, part := range parts {
-				if strings.Contains(part, "/") {
+				if strings.Contains(part, "/") && !strings.Contains(part, "=") {
 					times := strings.Split(part, "/")
 					if len(times) >= 2 {
 						if avg, err := strconv.ParseFloat(times[1], 64); err == nil {
 							result["latency"] = avg
+							break
 						}
 					}
 				}
