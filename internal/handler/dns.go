@@ -89,6 +89,7 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 				break
 			}
 			// 解析dig输出行，格式如：example.com.  300  IN  A  192.168.1.1
+			// 或者：www.baidu.com.  1038  IN  CNAME  www.a.shifen.com.
 			parts := strings.Fields(line)
 			if len(parts) >= 5 {
 				// parts[3] 是 "IN" (record type)，parts[4] 是记录类型 (A, AAAA, CNAME等)
@@ -96,16 +97,18 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 				recordValue := ""
 				if len(parts) > 5 {
 					recordValue = strings.Join(parts[5:], " ")
+					// 移除CNAME值末尾的点（如果有）
+					recordValue = strings.TrimSuffix(recordValue, ".")
 				}
 
-				// 只处理A和AAAA记录
-				if recordClass == "A" || recordClass == "AAAA" {
-					ipItem := map[string]interface{}{
-						"url":  parts[0],
+				// 处理A、AAAA和CNAME记录
+				if recordClass == "A" || recordClass == "AAAA" || recordClass == "CNAME" {
+					recordItem := map[string]interface{}{
+						"url":  strings.TrimSuffix(parts[0], "."), // 移除域名末尾的点
 						"type": recordClass,
-						"ip":   recordValue,
+						"ip":   recordValue, // CNAME记录中，ip字段存储的是CNAME值
 					}
-					ipList = append(ipList, ipItem)
+					ipList = append(ipList, recordItem)
 				}
 			}
 		}
