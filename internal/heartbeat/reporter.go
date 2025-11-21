@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
@@ -56,12 +55,10 @@ func (r *Reporter) Stop() {
 }
 
 func (r *Reporter) sendHeartbeat() {
-	// 获取本机IP
-	localIP := getLocalIP()
-
+	// 新节点不发送IP，让后端服务器从请求中获取
 	// 发送心跳（使用Form格式，兼容旧接口）
 	url := fmt.Sprintf("%s/api/node/heartbeat", r.cfg.Backend.URL)
-	req, err := http.NewRequest("POST", url, bytes.NewBufferString(fmt.Sprintf("realNodeIP=%s&type=pingServer", localIP)))
+	req, err := http.NewRequest("POST", url, bytes.NewBufferString("type=pingServer"))
 	if err != nil {
 		r.logger.Error("创建心跳请求失败", zap.Error(err))
 		return
@@ -77,27 +74,9 @@ func (r *Reporter) sendHeartbeat() {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		r.logger.Debug("心跳发送成功", zap.String("ip", localIP))
+		r.logger.Debug("心跳发送成功，后端将从请求中获取节点IP")
 	} else {
 		r.logger.Warn("心跳发送失败", zap.Int("status", resp.StatusCode))
 	}
-}
-
-func getLocalIP() string {
-	// 获取第一个非回环IP
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	
-	for _, addr := range addrs {
-		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-			if ipNet.IP.To4() != nil {
-				return ipNet.IP.String()
-			}
-		}
-	}
-	
-	return "127.0.0.1"
 }
 
