@@ -1,6 +1,7 @@
 package continuous
 
 import (
+	"bufio"
 	"context"
 	"os/exec"
 	"strconv"
@@ -56,13 +57,11 @@ func (t *PingTask) Start(ctx context.Context, resultCallback func(result map[str
 			}
 			t.mu.RUnlock()
 
-			// 执行单个ping包测试（立即返回结果）
-			result := t.executePing()
-			if resultCallback != nil {
-				resultCallback(result)
-			}
+			// 执行多个ping包测试，每个包完成后立即返回结果
+			// 使用 -c 10 -i 0.5 发送10个包，间隔0.5秒，实时解析每个包的延迟
+			t.executePingWithRealtimeCallback(resultCallback)
 
-			// 等待间隔时间后继续下一次测试
+			// 等待间隔时间后继续下一次测试（缩短间隔，比如1秒）
 			select {
 			case <-ctx.Done():
 				return
@@ -88,6 +87,124 @@ func (t *PingTask) UpdateLastRequest() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.LastRequest = time.Now()
+}
+
+func (t *PingTask) executePingWithRealtimeCallback(resultCallback func(result map[string]interface{})) {
+	// 发送10个ping包，间隔0.5秒，实时解析每个包的延迟
+	// 使用 -c 10 -i 0.5 发送10个包
+	cmd := exec.Command("ping", "-c", "10", "-i", "0.5", t.Target)
+	
+	// 获取标准输出管道，实时读取
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		if resultCallback != nil {
+			resultCallback(map[string]interface{}{
+				"timestamp":   time.Now().Unix(),
+				"latency":     -1,
+				"success":     false,
+				"packet_loss": true,
+				"error":       err.Error(),
+			})
+		}
+		return
+	}
+
+	// 启动命令
+	if err := cmd.Start(); err != nil {
+		if resultCallback != nil {
+			resultCallback(map[string]interface{}{
+				"timestamp":   time.Now().Unix(),
+				"latency":     -1,
+				"success":     false,
+				"packet_loss": true,
+				"error":       err.Error(),
+			})
+		}
+		return
+	}
+
+	// 使用bufio.Scanner实时读取每一行
+	scanner := bufio.NewScanner(stdout)
+	processedPackets := make(map[int]bool) // 用于去重，避免重复处理同一个包（通过icmp_seq）
+	
+	// 在goroutine中读取输出，避免阻塞
+	go func() {
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			
+			// 解析单个ping包的响应时间：64 bytes from 8.8.8.8: icmp_seq=0 ttl=64 time=10.123 ms
+			if strings.Contains(line, "time=") && strings.Contains(line, "icmp_seq") {
+				// 提取icmp_seq用于去重
+				seqIndex := strings.Index(line, "icmp_seq=")
+				seq := -1
+				if seqIndex != -1 {
+					seqPart := line[seqIndex+9:]
+					spaceIndex := strings.Index(seqPart, " ")
+					if spaceIndex == -1 {
+						spaceIndex = len(seqPart)
+					}
+					if s, err := strconv.Atoi(seqPart[:spaceIndex]); err == nil {
+						seq = s
+					}
+				}
+				
+				// 检查是否已处理过这个包
+				if seq >= 0 && processedPackets[seq] {
+					continue
+				}
+				if seq >= 0 {
+					processedPackets[seq] = true
+				}
+				
+				latency := parseSinglePacketLatency(line)
+				if latency >= 0 && resultCallback != nil {
+					resultCallback(map[string]interface{}{
+						"timestamp":   time.Now().Unix(),
+						"latency":     latency,
+						"success":     true,
+						"packet_loss": false,
+					})
+				}
+			} else if strings.Contains(line, "Request timeout") || strings.Contains(line, "no answer") {
+				// 处理超时的包
+				if resultCallback != nil {
+					resultCallback(map[string]interface{}{
+						"timestamp":   time.Now().Unix(),
+						"latency":     -1,
+						"success":     false,
+						"packet_loss": true,
+					})
+				}
+			}
+		}
+	}()
+
+	// 等待命令完成
+	cmd.Wait()
+}
+
+// parseSinglePacketLatency 解析单个ping包的延迟时间
+func parseSinglePacketLatency(line string) float64 {
+	// 格式：64 bytes from 8.8.8.8: icmp_seq=0 ttl=64 time=10.123 ms
+	timeIndex := strings.Index(line, "time=")
+	if timeIndex == -1 {
+		return -1
+	}
+	
+	timePart := line[timeIndex+5:]
+	spaceIndex := strings.Index(timePart, " ")
+	if spaceIndex == -1 {
+		return -1
+	}
+	
+	timeStr := timePart[:spaceIndex]
+	if latency, err := strconv.ParseFloat(timeStr, 64); err == nil {
+		return latency
+	}
+	return -1
 }
 
 func (t *PingTask) executePing() map[string]interface{} {
