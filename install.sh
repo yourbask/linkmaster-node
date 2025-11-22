@@ -319,6 +319,74 @@ EOF
     echo -e "${GREEN}✓ 服务创建完成${NC}"
 }
 
+# 配置防火墙规则
+configure_firewall() {
+    echo -e "${BLUE}配置防火墙规则（开放2200端口）...${NC}"
+    
+    PORT=2200
+    FIREWALL_CONFIGURED=false
+    
+    # 检测 firewalld (CentOS/RHEL 7+, Fedora)
+    if command -v firewall-cmd > /dev/null 2>&1; then
+        if sudo systemctl is-active --quiet firewalld 2>/dev/null; then
+            echo -e "${BLUE}检测到 firewalld，添加端口规则...${NC}"
+            if sudo firewall-cmd --permanent --add-port=${PORT}/tcp > /dev/null 2>&1; then
+                sudo firewall-cmd --reload > /dev/null 2>&1
+                echo -e "${GREEN}✓ firewalld 规则已添加${NC}"
+                FIREWALL_CONFIGURED=true
+            else
+                echo -e "${YELLOW}⚠ firewalld 规则添加失败（可能需要手动配置）${NC}"
+            fi
+        fi
+    fi
+    
+    # 检测 ufw (Ubuntu/Debian)
+    if command -v ufw > /dev/null 2>&1; then
+        if sudo ufw status > /dev/null 2>&1; then
+            echo -e "${BLUE}检测到 ufw，添加端口规则...${NC}"
+            if sudo ufw allow ${PORT}/tcp > /dev/null 2>&1; then
+                echo -e "${GREEN}✓ ufw 规则已添加${NC}"
+                FIREWALL_CONFIGURED=true
+            else
+                echo -e "${YELLOW}⚠ ufw 规则添加失败（可能需要手动配置）${NC}"
+            fi
+        fi
+    fi
+    
+    # 检测 iptables（较老的系统）
+    if command -v iptables > /dev/null 2>&1 && [ "$FIREWALL_CONFIGURED" = false ]; then
+        # 检查是否有iptables规则（说明防火墙可能在使用）
+        if sudo iptables -L -n 2>/dev/null | grep -q "Chain INPUT"; then
+            echo -e "${BLUE}检测到 iptables，添加端口规则...${NC}"
+            # 检查规则是否已存在
+            if ! sudo iptables -C INPUT -p tcp --dport ${PORT} -j ACCEPT > /dev/null 2>&1; then
+                if sudo iptables -I INPUT -p tcp --dport ${PORT} -j ACCEPT > /dev/null 2>&1; then
+                    echo -e "${GREEN}✓ iptables 规则已添加${NC}"
+                    # 尝试保存规则（不同系统保存方式不同）
+                    if command -v iptables-save > /dev/null 2>&1; then
+                        if [ -f /etc/redhat-release ]; then
+                            sudo iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
+                        elif [ -f /etc/debian_version ]; then
+                            sudo iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+                        fi
+                    fi
+                    FIREWALL_CONFIGURED=true
+                else
+                    echo -e "${YELLOW}⚠ iptables 规则添加失败（可能需要手动配置）${NC}"
+                fi
+            else
+                echo -e "${GREEN}✓ iptables 规则已存在${NC}"
+                FIREWALL_CONFIGURED=true
+            fi
+        fi
+    fi
+    
+    if [ "$FIREWALL_CONFIGURED" = false ]; then
+        echo -e "${YELLOW}⚠ 未检测到活动的防火墙，或防火墙未启用${NC}"
+        echo -e "${YELLOW}  如果节点无法远程访问，请手动开放端口 ${PORT}/tcp${NC}"
+    fi
+}
+
 # 启动服务
 start_service() {
     echo -e "${BLUE}启动服务...${NC}"
@@ -403,6 +471,7 @@ main() {
     install_dependencies
     build_from_source
     create_service
+    configure_firewall
     start_service
     verify_installation
     
