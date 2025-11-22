@@ -387,6 +387,84 @@ configure_firewall() {
     fi
 }
 
+# 登记节点（调用心跳API获取节点信息）
+register_node() {
+    echo -e "${BLUE}登记节点到后端服务器...${NC}"
+    
+    # 创建临时配置文件
+    CONFIG_FILE="$SOURCE_DIR/config.yaml"
+    sudo mkdir -p "$SOURCE_DIR"
+    
+    # 创建基础配置文件
+    sudo tee "$CONFIG_FILE" > /dev/null <<EOF
+server:
+  port: 2200
+backend:
+  url: ${BACKEND_URL}
+heartbeat:
+  interval: 60
+debug: false
+node:
+  id: 0
+  ip: ""
+  country: ""
+  province: ""
+  city: ""
+  isp: ""
+EOF
+    
+    # 调用心跳API获取节点信息
+    echo -e "${BLUE}发送心跳请求获取节点信息...${NC}"
+    RESPONSE=$(curl -s -X POST "${BACKEND_URL}/api/node/heartbeat" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "type=pingServer" 2>&1)
+    
+    if [ $? -eq 0 ]; then
+        # 尝试解析JSON响应
+        NODE_ID=$(echo "$RESPONSE" | grep -o '"node_id":[0-9]*' | grep -o '[0-9]*' | head -1)
+        NODE_IP=$(echo "$RESPONSE" | grep -o '"node_ip":"[^"]*"' | cut -d'"' -f4 | head -1)
+        COUNTRY=$(echo "$RESPONSE" | grep -o '"country":"[^"]*"' | cut -d'"' -f4 | head -1)
+        PROVINCE=$(echo "$RESPONSE" | grep -o '"province":"[^"]*"' | cut -d'"' -f4 | head -1)
+        CITY=$(echo "$RESPONSE" | grep -o '"city":"[^"]*"' | cut -d'"' -f4 | head -1)
+        ISP=$(echo "$RESPONSE" | grep -o '"isp":"[^"]*"' | cut -d'"' -f4 | head -1)
+        
+        if [ -n "$NODE_ID" ] && [ "$NODE_ID" != "0" ] && [ -n "$NODE_IP" ]; then
+            # 更新配置文件
+            sudo tee "$CONFIG_FILE" > /dev/null <<EOF
+server:
+  port: 2200
+backend:
+  url: ${BACKEND_URL}
+heartbeat:
+  interval: 60
+debug: false
+node:
+  id: ${NODE_ID}
+  ip: ${NODE_IP}
+  country: ${COUNTRY:-""}
+  province: ${PROVINCE:-""}
+  city: ${CITY:-""}
+  isp: ${ISP:-""}
+EOF
+            echo -e "${GREEN}✓ 节点登记成功${NC}"
+            echo -e "${BLUE}  节点ID: ${NODE_ID}${NC}"
+            echo -e "${BLUE}  节点IP: ${NODE_IP}${NC}"
+            if [ -n "$COUNTRY" ] || [ -n "$PROVINCE" ] || [ -n "$CITY" ]; then
+                echo -e "${BLUE}  位置: ${COUNTRY:-""}/${PROVINCE:-""}/${CITY:-""}${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠ 无法从响应中解析节点信息，将在服务启动时重试${NC}"
+            echo -e "${YELLOW}  响应: ${RESPONSE}${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠ 心跳请求失败，将在服务启动时重试${NC}"
+        echo -e "${YELLOW}  错误: ${RESPONSE}${NC}"
+    fi
+    
+    # 设置配置文件权限
+    sudo chmod 644 "$CONFIG_FILE"
+}
+
 # 启动服务
 start_service() {
     echo -e "${BLUE}启动服务...${NC}"
@@ -472,6 +550,7 @@ main() {
     build_from_source
     create_service
     configure_firewall
+    register_node
     start_service
     verify_installation
     

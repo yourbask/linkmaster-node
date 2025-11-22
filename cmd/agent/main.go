@@ -37,6 +37,19 @@ func main() {
 	// 初始化错误恢复
 	recovery.Init()
 
+	// 如果配置中没有节点信息，先发送一次心跳获取节点信息
+	if cfg.Node.ID == 0 || cfg.Node.IP == "" {
+		logger.Info("节点信息未配置，发送心跳获取节点信息")
+		if err := heartbeat.RegisterNode(cfg); err != nil {
+			logger.Warn("注册节点失败，将在心跳时重试", zap.Error(err))
+		} else {
+			logger.Info("节点信息已获取并保存",
+				zap.Uint("node_id", cfg.Node.ID),
+				zap.String("node_ip", cfg.Node.IP),
+				zap.String("location", fmt.Sprintf("%s/%s/%s", cfg.Node.Country, cfg.Node.Province, cfg.Node.City)))
+		}
+	}
+
 	// 启动心跳上报
 	heartbeatReporter := heartbeat.NewReporter(cfg)
 	go heartbeatReporter.Start(context.Background())

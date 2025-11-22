@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +22,16 @@ type Config struct {
 	} `yaml:"heartbeat"`
 
 	Debug bool `yaml:"debug"`
+
+	// 节点信息（通过心跳获取并持久化）
+	Node struct {
+		ID       uint   `yaml:"id"`       // 节点ID
+		IP       string `yaml:"ip"`       // 节点外网IP
+		Country  string `yaml:"country"`  // 国家
+		Province string `yaml:"province"` // 省份
+		City     string `yaml:"city"`     // 城市
+		ISP      string `yaml:"isp"`      // ISP
+	} `yaml:"node"`
 }
 
 func Load() (*Config, error) {
@@ -56,5 +67,39 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Save 保存配置到文件
+func (c *Config) Save() error {
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+
+	// 确保目录存在
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("创建配置目录失败: %w", err)
+	}
+
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("序列化配置失败: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return fmt.Errorf("写入配置文件失败: %w", err)
+	}
+
+	return nil
+}
+
+// GetConfigPath 获取配置文件路径
+func GetConfigPath() string {
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+	return configPath
 }
 

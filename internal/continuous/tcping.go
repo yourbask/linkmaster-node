@@ -73,8 +73,25 @@ func (t *TCPingTask) Start(ctx context.Context, resultCallback func(result map[s
 			}
 			t.mu.RUnlock()
 
+			// 检查任务是否已停止
+			t.mu.RLock()
+			isRunning := t.IsRunning
+			t.mu.RUnlock()
+			if !isRunning {
+				return
+			}
+			
 			// 执行tcping测试（每次测试完成后立即返回结果）
 			result := t.executeTCPing()
+			
+			// 再次检查任务是否已停止（执行完成后）
+			t.mu.RLock()
+			isRunning = t.IsRunning
+			t.mu.RUnlock()
+			if !isRunning {
+				return
+			}
+			
 			if resultCallback != nil {
 				resultCallback(result)
 			}
@@ -94,11 +111,22 @@ func (t *TCPingTask) Start(ctx context.Context, resultCallback func(result map[s
 
 func (t *TCPingTask) Stop() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.IsRunning {
-		t.IsRunning = false
+	if !t.IsRunning {
+		t.mu.Unlock()
+		return
+	}
+	t.IsRunning = false
+	t.mu.Unlock()
+	
+	// 关闭停止通道
+	select {
+	case <-t.StopCh:
+		// 已经关闭
+	default:
 		close(t.StopCh)
 	}
+	
+	t.logger.Info("TCPing任务已停止", zap.String("task_id", t.TaskID))
 }
 
 func (t *TCPingTask) UpdateLastRequest() {

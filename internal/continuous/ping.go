@@ -24,6 +24,8 @@ type PingTask struct {
 	mu          sync.RWMutex
 	logger      *zap.Logger
 	targetIP    string // 存储目标IP，从ping输出中提取
+	currentCmd  *exec.Cmd // 当前正在执行的命令，用于停止时取消
+	cmdMu       sync.Mutex // 保护 currentCmd 的锁
 }
 
 func NewPingTask(taskID, target string, interval, maxDuration time.Duration) *PingTask {
@@ -77,11 +79,31 @@ func (t *PingTask) Start(ctx context.Context, resultCallback func(result map[str
 
 func (t *PingTask) Stop() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.IsRunning {
-		t.IsRunning = false
+	if !t.IsRunning {
+		t.mu.Unlock()
+		return
+	}
+	t.IsRunning = false
+	t.mu.Unlock()
+	
+	// 取消正在执行的命令
+	t.cmdMu.Lock()
+	if t.currentCmd != nil && t.currentCmd.Process != nil {
+		t.logger.Debug("取消正在执行的ping命令", zap.String("task_id", t.TaskID))
+		t.currentCmd.Process.Kill()
+		t.currentCmd = nil
+	}
+	t.cmdMu.Unlock()
+	
+	// 关闭停止通道
+	select {
+	case <-t.StopCh:
+		// 已经关闭
+	default:
 		close(t.StopCh)
 	}
+	
+	t.logger.Info("Ping任务已停止", zap.String("task_id", t.TaskID))
 }
 
 func (t *PingTask) UpdateLastRequest() {
@@ -91,9 +113,29 @@ func (t *PingTask) UpdateLastRequest() {
 }
 
 func (t *PingTask) executePingWithRealtimeCallback(resultCallback func(result map[string]interface{})) {
+	// 检查任务是否已停止
+	t.mu.RLock()
+	isRunning := t.IsRunning
+	t.mu.RUnlock()
+	if !isRunning {
+		return
+	}
+	
 	// 发送10个ping包，间隔0.5秒，实时解析每个包的延迟
 	// 使用 -c 10 -i 0.5 发送10个包
 	cmd := exec.Command("ping", "-c", "10", "-i", "0.5", t.Target)
+	
+	// 保存命令引用，以便停止时取消
+	t.cmdMu.Lock()
+	t.currentCmd = cmd
+	t.cmdMu.Unlock()
+	
+	// 确保在函数退出时清理命令引用
+	defer func() {
+		t.cmdMu.Lock()
+		t.currentCmd = nil
+		t.cmdMu.Unlock()
+	}()
 	
 	// 获取标准输出管道，实时读取
 	stdout, err := cmd.StdoutPipe()
@@ -123,6 +165,16 @@ func (t *PingTask) executePingWithRealtimeCallback(resultCallback func(result ma
 		}
 		return
 	}
+	
+	// 检查任务是否已停止（在启动命令后）
+	t.mu.RLock()
+	isRunning = t.IsRunning
+	t.mu.RUnlock()
+	if !isRunning {
+		// 任务已停止，取消命令
+		cmd.Process.Kill()
+		return
+	}
 
 	// 使用bufio.Scanner实时读取每一行
 	scanner := bufio.NewScanner(stdout)
@@ -131,6 +183,14 @@ func (t *PingTask) executePingWithRealtimeCallback(resultCallback func(result ma
 	// 在goroutine中读取输出，避免阻塞
 	go func() {
 		for scanner.Scan() {
+			// 检查任务是否已停止
+			t.mu.RLock()
+			isRunning := t.IsRunning
+			t.mu.RUnlock()
+			if !isRunning {
+				break
+			}
+			
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
 				continue
