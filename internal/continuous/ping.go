@@ -23,6 +23,7 @@ type PingTask struct {
 	IsRunning   bool
 	mu          sync.RWMutex
 	logger      *zap.Logger
+	targetIP    string // 存储目标IP，从ping输出中提取
 }
 
 func NewPingTask(taskID, target string, interval, maxDuration time.Duration) *PingTask {
@@ -135,8 +136,57 @@ func (t *PingTask) executePingWithRealtimeCallback(resultCallback func(result ma
 				continue
 			}
 			
+			// 从PING行提取目标IP：PING example.com (8.8.8.8) 56(84) bytes of data.
+			if strings.HasPrefix(line, "PING") {
+				t.mu.RLock()
+				currentTargetIP := t.targetIP
+				t.mu.RUnlock()
+				
+				if currentTargetIP == "" {
+					// 尝试从括号中提取IP：PING example.com (8.8.8.8)
+					startIdx := strings.Index(line, "(")
+					endIdx := strings.Index(line, ")")
+					if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+						t.mu.Lock()
+						t.targetIP = line[startIdx+1 : endIdx]
+						t.mu.Unlock()
+					} else {
+						// 如果没有括号，尝试从"from"后提取：64 bytes from 8.8.8.8:
+						fromIdx := strings.Index(line, "from")
+						if fromIdx != -1 {
+							parts := strings.Fields(line[fromIdx+4:])
+							if len(parts) > 0 {
+								ipPart := strings.TrimSuffix(parts[0], ":")
+								t.mu.Lock()
+								t.targetIP = ipPart
+								t.mu.Unlock()
+							}
+						}
+					}
+				}
+			}
+			
 			// 解析单个ping包的响应时间：64 bytes from 8.8.8.8: icmp_seq=0 ttl=64 time=10.123 ms
 			if strings.Contains(line, "time=") && strings.Contains(line, "icmp_seq") {
+				// 如果还没有提取到目标IP，从这一行提取
+				t.mu.RLock()
+				currentTargetIP := t.targetIP
+				t.mu.RUnlock()
+				
+				if currentTargetIP == "" {
+					// 格式：64 bytes from 8.8.8.8: icmp_seq=0
+					fromIdx := strings.Index(line, "from")
+					if fromIdx != -1 {
+						afterFrom := line[fromIdx+4:]
+						colonIdx := strings.Index(afterFrom, ":")
+						if colonIdx != -1 {
+							t.mu.Lock()
+							t.targetIP = strings.TrimSpace(afterFrom[:colonIdx])
+							t.mu.Unlock()
+						}
+					}
+				}
+				
 				// 提取icmp_seq用于去重
 				seqIndex := strings.Index(line, "icmp_seq=")
 				seq := -1
@@ -161,22 +211,38 @@ func (t *PingTask) executePingWithRealtimeCallback(resultCallback func(result ma
 				
 				latency := parseSinglePacketLatency(line)
 				if latency >= 0 && resultCallback != nil {
-					resultCallback(map[string]interface{}{
+					t.mu.RLock()
+					currentTargetIP := t.targetIP
+					t.mu.RUnlock()
+					
+					result := map[string]interface{}{
 						"timestamp":   time.Now().Unix(),
 						"latency":     latency,
 						"success":     true,
 						"packet_loss": false,
-					})
+					}
+					if currentTargetIP != "" {
+						result["ip"] = currentTargetIP
+					}
+					resultCallback(result)
 				}
 			} else if strings.Contains(line, "Request timeout") || strings.Contains(line, "no answer") {
 				// 处理超时的包
 				if resultCallback != nil {
-					resultCallback(map[string]interface{}{
+					t.mu.RLock()
+					currentTargetIP := t.targetIP
+					t.mu.RUnlock()
+					
+					result := map[string]interface{}{
 						"timestamp":   time.Now().Unix(),
 						"latency":     -1,
 						"success":     false,
 						"packet_loss": true,
-					})
+					}
+					if currentTargetIP != "" {
+						result["ip"] = currentTargetIP
+					}
+					resultCallback(result)
 				}
 			}
 		}
