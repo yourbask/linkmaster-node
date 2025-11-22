@@ -91,14 +91,18 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 				break
 			}
 			// 解析dig输出行，格式如：example.com.  300  IN  A  192.168.1.1
-			// 或者：www.baidu.com.  1038  IN  CNAME  www.a.shifen.com.
+			// 或者：www.baidu.com.  430  IN  CNAME  www.a.shifen.com.
 			parts := strings.Fields(line)
 			if len(parts) >= 5 {
-				// parts[3] 是 "IN" (record type)，parts[4] 是记录类型 (A, AAAA, CNAME等)
-				recordClass := parts[4] // A, AAAA, CNAME等
+				// parts[0] = 域名
+				// parts[1] = TTL
+				// parts[2] = "IN" (class)
+				// parts[3] = 记录类型 (A, AAAA, CNAME等)
+				// parts[4] = 记录值
+				recordClass := parts[3] // A, AAAA, CNAME等
 				recordValue := ""
-				if len(parts) > 5 {
-					recordValue = strings.Join(parts[5:], " ")
+				if len(parts) >= 5 {
+					recordValue = strings.Join(parts[4:], " ")
 					// 移除值末尾的点（如果有）
 					recordValue = strings.TrimSuffix(recordValue, ".")
 				}
