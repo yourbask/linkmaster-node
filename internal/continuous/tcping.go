@@ -140,22 +140,49 @@ func (t *TCPingTask) executeTCPing() map[string]interface{} {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(t.Host, strconv.Itoa(t.Port)), 5*time.Second)
 	latency := time.Since(start).Milliseconds()
 
+	// 提取目标IP
+	var targetIP string
+	if conn != nil {
+		if addr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+			targetIP = addr.IP.String()
+		}
+		defer conn.Close()
+	}
+
+	// 如果连接失败，从host解析
+	if targetIP == "" {
+		ips, err := net.LookupIP(t.Host)
+		if err == nil && len(ips) > 0 {
+			// 优先使用IPv4
+			for _, ip := range ips {
+				if ip.To4() != nil {
+					targetIP = ip.String()
+					break
+				}
+			}
+			if targetIP == "" && len(ips) > 0 {
+				targetIP = ips[0].String()
+			}
+		}
+	}
+
 	if err != nil {
 		return map[string]interface{}{
 			"timestamp":   time.Now().Unix(),
 			"latency":     -1,
 			"success":     false,
 			"packet_loss": true,
+			"ip":          targetIP,
 			"error":       err.Error(),
 		}
 	}
-	defer conn.Close()
 
 	return map[string]interface{}{
 		"timestamp":   time.Now().Unix(),
 		"latency":     float64(latency),
 		"success":     true,
 		"packet_loss": false,
+		"ip":          targetIP,
 	}
 }
 
