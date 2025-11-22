@@ -204,9 +204,13 @@ func pushResultToBackend(taskID string, result map[string]interface{}) {
 	// 推送结果到后端
 	url := fmt.Sprintf("%s/api/public/node/continuous/result", backendURL)
 	
-	// 不发送node_ip，让后端从请求中获取客户端IP（外网IP）
+	// 获取节点IP
+	nodeIP := getLocalIP()
+	
+	// 发送node_ip，后端可以通过node_ip查询node_id进行匹配
 	data := map[string]interface{}{
 		"task_id": taskID,
+		"node_ip": nodeIP,
 		"result":  result,
 	}
 
