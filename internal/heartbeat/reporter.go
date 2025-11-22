@@ -3,14 +3,38 @@ package heartbeat
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"linkmaster-node/internal/config"
 
 	"go.uber.org/zap"
 )
+
+// 节点信息存储（通过心跳更新）
+var nodeInfo struct {
+	sync.RWMutex
+	nodeID uint
+	nodeIP string
+}
+
+// GetNodeID 获取节点ID
+func GetNodeID() uint {
+	nodeInfo.RLock()
+	defer nodeInfo.RUnlock()
+	return nodeInfo.nodeID
+}
+
+// GetNodeIP 获取节点IP
+func GetNodeIP() string {
+	nodeInfo.RLock()
+	defer nodeInfo.RUnlock()
+	return nodeInfo.nodeIP
+}
 
 type Reporter struct {
 	cfg    *config.Config
@@ -74,7 +98,32 @@ func (r *Reporter) sendHeartbeat() {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		r.logger.Debug("心跳发送成功，后端将从请求中获取节点IP")
+		// 尝试解析响应，获取 node_id 和 node_ip
+		body, err := io.ReadAll(resp.Body)
+		if err == nil && len(body) > 0 {
+			// 尝试解析 JSON 响应
+			var result struct {
+				Status string `json:"status"`
+				NodeID uint   `json:"node_id"`
+				NodeIP string `json:"node_ip"`
+			}
+			if err := json.Unmarshal(body, &result); err == nil {
+				// 成功解析 JSON，更新节点信息
+				if result.NodeID > 0 && result.NodeIP != "" {
+					nodeInfo.Lock()
+					nodeInfo.nodeID = result.NodeID
+					nodeInfo.nodeIP = result.NodeIP
+					nodeInfo.Unlock()
+					r.logger.Debug("心跳响应解析成功，已更新节点信息",
+						zap.Uint("node_id", result.NodeID),
+						zap.String("node_ip", result.NodeIP))
+				}
+			} else {
+				// 不是 JSON 格式，可能是旧格式的 "done"，忽略
+				r.logger.Debug("心跳响应为旧格式，跳过解析")
+			}
+		}
+		r.logger.Debug("心跳发送成功")
 	} else {
 		r.logger.Warn("心跳发送失败", zap.Int("status", resp.StatusCode))
 	}

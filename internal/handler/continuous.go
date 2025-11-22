@@ -13,6 +13,7 @@ import (
 
 	"linkmaster-node/internal/config"
 	"linkmaster-node/internal/continuous"
+	"linkmaster-node/internal/heartbeat"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -204,14 +205,32 @@ func pushResultToBackend(taskID string, result map[string]interface{}) {
 	// 推送结果到后端
 	url := fmt.Sprintf("%s/api/public/node/continuous/result", backendURL)
 	
-	// 获取节点IP
-	nodeIP := getLocalIP()
+	// 优先使用心跳返回的节点信息
+	nodeID := heartbeat.GetNodeID()
+	nodeIP := heartbeat.GetNodeIP()
 	
-	// 发送node_ip，后端可以通过node_ip查询node_id进行匹配
+	// 如果心跳还没有返回节点信息，使用本地IP作为后备
+	if nodeIP == "" {
+		nodeIP = getLocalIP()
+		logger.Debug("使用本地IP作为后备", zap.String("node_ip", nodeIP))
+	}
+	
+	// 发送 node_id 和 node_ip，后端可以通过这些信息精准匹配
 	data := map[string]interface{}{
 		"task_id": taskID,
-		"node_ip": nodeIP,
 		"result":  result,
+	}
+	
+	// 如果 node_id 存在，优先发送 node_id
+	if nodeID > 0 {
+		data["node_id"] = nodeID
+		logger.Debug("推送结果时使用存储的node_id", zap.Uint("node_id", nodeID))
+	}
+	
+	// 如果 node_ip 存在，发送 node_ip
+	if nodeIP != "" {
+		data["node_ip"] = nodeIP
+		logger.Debug("推送结果时使用存储的node_ip", zap.String("node_ip", nodeIP))
 	}
 
 	jsonData, err := json.Marshal(data)
