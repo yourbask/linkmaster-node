@@ -40,16 +40,13 @@ func NewPingTask(taskID, target string, interval, maxDuration time.Duration) *Pi
 }
 
 func (t *PingTask) Start(ctx context.Context, resultCallback func(result map[string]interface{})) {
-	ticker := time.NewTicker(t.Interval)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.StopCh:
 			return
-		case <-ticker.C:
+		default:
 			// 检查是否超过最大运行时长
 			t.mu.RLock()
 			if time.Since(t.StartTime) > t.MaxDuration {
@@ -59,10 +56,20 @@ func (t *PingTask) Start(ctx context.Context, resultCallback func(result map[str
 			}
 			t.mu.RUnlock()
 
-			// 执行ping测试
+			// 执行单个ping包测试（立即返回结果）
 			result := t.executePing()
 			if resultCallback != nil {
 				resultCallback(result)
+			}
+
+			// 等待间隔时间后继续下一次测试
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.StopCh:
+				return
+			case <-time.After(t.Interval):
+				// 继续下一次循环
 			}
 		}
 	}
@@ -84,7 +91,8 @@ func (t *PingTask) UpdateLastRequest() {
 }
 
 func (t *PingTask) executePing() map[string]interface{} {
-	cmd := exec.Command("ping", "-c", "4", t.Target)
+	// 发送单个ping包（-c 1），每个包完成后立即返回结果
+	cmd := exec.Command("ping", "-c", "1", t.Target)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return map[string]interface{}{
@@ -96,7 +104,7 @@ func (t *PingTask) executePing() map[string]interface{} {
 		}
 	}
 
-	// 解析ping输出
+	// 解析ping输出（单个包的结果）
 	result := parsePingOutput(string(output))
 	result["timestamp"] = time.Now().Unix()
 	return result
@@ -113,7 +121,26 @@ func parsePingOutput(output string) map[string]interface{} {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		
-		// 解析丢包率：4 packets transmitted, 4 received, 0% packet loss
+		// 解析单个ping包的响应时间：64 bytes from 8.8.8.8: icmp_seq=0 ttl=64 time=10.123 ms
+		if strings.Contains(line, "time=") && strings.Contains(line, "icmp_seq") {
+			// 提取time=后面的数值
+			timeIndex := strings.Index(line, "time=")
+			if timeIndex != -1 {
+				timePart := line[timeIndex+5:]
+				spaceIndex := strings.Index(timePart, " ")
+				if spaceIndex != -1 {
+					timeStr := timePart[:spaceIndex]
+					if latency, err := strconv.ParseFloat(timeStr, 64); err == nil {
+						result["latency"] = latency
+						result["success"] = true
+						result["packet_loss"] = false
+						return result
+					}
+				}
+			}
+		}
+		
+		// 解析丢包率：1 packets transmitted, 1 received, 0% packet loss
 		if strings.Contains(line, "packets transmitted") {
 			parts := strings.Fields(line)
 			for i, part := range parts {
@@ -124,13 +151,14 @@ func parsePingOutput(output string) map[string]interface{} {
 						result["packet_loss"] = loss > 0
 						if loss > 0 {
 							result["success"] = false
+							result["latency"] = -1
 						}
 					}
 				}
 			}
 		}
 		
-		// 解析延迟：rtt min/avg/max/mdev = 10.123/12.456/15.789/2.345 ms
+		// 解析延迟：rtt min/avg/max/mdev = 10.123/10.123/10.123/0.000 ms（单个包时min=avg=max）
 		if strings.Contains(line, "min/avg/max") || strings.Contains(line, "rtt") {
 			parts := strings.Fields(line)
 			for _, part := range parts {

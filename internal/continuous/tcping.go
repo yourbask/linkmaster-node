@@ -57,16 +57,13 @@ func NewTCPingTask(taskID, target string, interval, maxDuration time.Duration) (
 }
 
 func (t *TCPingTask) Start(ctx context.Context, resultCallback func(result map[string]interface{})) {
-	ticker := time.NewTicker(t.Interval)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.StopCh:
 			return
-		case <-ticker.C:
+		default:
 			// 检查是否超过最大运行时长
 			t.mu.RLock()
 			if time.Since(t.StartTime) > t.MaxDuration {
@@ -76,10 +73,20 @@ func (t *TCPingTask) Start(ctx context.Context, resultCallback func(result map[s
 			}
 			t.mu.RUnlock()
 
-			// 执行tcping测试
+			// 执行tcping测试（每次测试完成后立即返回结果）
 			result := t.executeTCPing()
 			if resultCallback != nil {
 				resultCallback(result)
+			}
+
+			// 等待间隔时间后继续下一次测试
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.StopCh:
+				return
+			case <-time.After(t.Interval):
+				// 继续下一次循环
 			}
 		}
 	}

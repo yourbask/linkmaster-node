@@ -49,6 +49,7 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 		"type":   "ceDns",
 		"requrl": hostname,
 		"ips":    []interface{}{},
+		"cnames": []interface{}{},
 	}
 
 	// 构建dig命令
@@ -77,6 +78,7 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 	lines := strings.Split(outputStr, "\n")
 	inAnswerSection := false
 	ipList := make([]map[string]interface{}, 0)
+	cnameList := make([]map[string]interface{}, 0)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -97,18 +99,27 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 				recordValue := ""
 				if len(parts) > 5 {
 					recordValue = strings.Join(parts[5:], " ")
-					// 移除CNAME值末尾的点（如果有）
+					// 移除值末尾的点（如果有）
 					recordValue = strings.TrimSuffix(recordValue, ".")
 				}
 
-				// 处理A、AAAA和CNAME记录
-				if recordClass == "A" || recordClass == "AAAA" || recordClass == "CNAME" {
-					recordItem := map[string]interface{}{
-						"url":  strings.TrimSuffix(parts[0], "."), // 移除域名末尾的点
+				domain := strings.TrimSuffix(parts[0], ".") // 移除域名末尾的点
+
+				// 分别处理A/AAAA记录和CNAME记录
+				if recordClass == "A" || recordClass == "AAAA" {
+					ipItem := map[string]interface{}{
+						"url":  domain,
 						"type": recordClass,
-						"ip":   recordValue, // CNAME记录中，ip字段存储的是CNAME值
+						"ip":   recordValue,
 					}
-					ipList = append(ipList, recordItem)
+					ipList = append(ipList, ipItem)
+				} else if recordClass == "CNAME" {
+					cnameItem := map[string]interface{}{
+						"url":  domain,
+						"type": recordClass,
+						"cname": recordValue, // CNAME值
+					}
+					cnameList = append(cnameList, cnameItem)
 				}
 			}
 		}
@@ -142,5 +153,6 @@ func handleDns(c *gin.Context, url string, params map[string]interface{}) {
 	}
 
 	result["ips"] = ipList
+	result["cnames"] = cnameList
 	c.JSON(200, result)
 }
